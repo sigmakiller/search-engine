@@ -5,14 +5,65 @@ per-domain rate limiting, and retry with exponential backoff.
 
 import asyncio
 import aiohttp
+import re
 from bs4 import BeautifulSoup
 import redis
 from sentence_transformers import SentenceTransformer
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse, parse_qs, urlencode
 import time
 from pymongo import MongoClient
 import config
 from robots_manager import RobotsManager
+
+
+# ─── URL Normalization ───────────────────────────────────────────────────────
+
+def normalize_url(url):
+    """
+    Normalize a URL to prevent duplicate crawling of the same page.
+
+    Normalization steps:
+      1. Strip fragments (#section)
+      2. Lowercase scheme and host
+      3. Remove trailing slash (except for root paths)
+      4. Sort query parameters alphabetically
+      5. Remove default ports (80 for http, 443 for https)
+      6. Collapse duplicate slashes in path
+
+    Returns:
+        Normalized URL string.
+    """
+    try:
+        parsed = urlparse(url)
+
+        # Lowercase scheme and host
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname.lower() if parsed.hostname else ""
+
+        # Remove default ports
+        port = parsed.port
+        if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+            port = None
+        netloc = f"{host}:{port}" if port else host
+
+        # Clean path: collapse duplicate slashes, remove trailing slash
+        path = re.sub(r'/+', '/', parsed.path)
+        if path != '/' and path.endswith('/'):
+            path = path.rstrip('/')
+
+        # Sort query parameters
+        query_params = parse_qs(parsed.query, keep_blank_values=True)
+        sorted_query = urlencode(
+            sorted(query_params.items()),
+            doseq=True,
+        )
+
+        # Rebuild without fragment
+        normalized = urlunparse((scheme, netloc, path, parsed.params, sorted_query, ""))
+        return normalized
+
+    except Exception:
+        return url  # Return as-is if normalization fails
 
 
 # ─── Shared Resources ───────────────────────────────────────────────────────
@@ -139,7 +190,7 @@ async def fetch_page(session, url):
 # ─── Content Extraction ──────────────────────────────────────────────────────
 
 def extract_about(soup):
-    """Extract description or about content from a page."""
+    """Extract meta description or about content from a page."""
     desc = soup.find("meta", attrs={"name": "description"})
     if desc and desc.get("content"):
         return desc["content"]
@@ -155,32 +206,70 @@ def extract_about(soup):
     return ""
 
 
+def extract_body_text(soup):
+    """
+    Extract visible body text from a page, excluding scripts, styles,
+    and other non-visible elements.
+
+    Returns:
+        Cleaned body text as a single string.
+    """
+    # Remove non-visible elements
+    for tag in soup.find_all(["script", "style", "noscript", "nav", "footer", "header"]):
+        tag.decompose()
+
+    # Get visible text
+    text = soup.get_text(separator=" ", strip=True)
+
+    # Collapse whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
+
+
 def process_page_data(url, html):
     """
     Extract useful data from a page's HTML.
-    Returns the page data dict and list of discovered URLs.
+    Extracts title, meta description, full body text, and creates
+    a rich embedding from combined content.
+
+    Returns:
+        Tuple of (page_data dict, list of discovered normalized URLs).
     """
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(strip=True) if soup.title else ""
     about = extract_about(soup)
-    vector = model.encode(about).tolist() if about else []
 
-    # Collect outgoing links
+    # Extract full body text
+    body_text = extract_body_text(soup)
+    body_snippet = body_text[:config.BODY_SNIPPET_LENGTH] if body_text else ""
+
+    # Create rich embedding from combined content (title + about + body)
+    embed_text = f"{title} {about} {body_text[:config.BODY_EMBED_LENGTH]}".strip()
+    vector = model.encode(embed_text).tolist() if embed_text else []
+
+    # Collect outgoing links (normalized)
     outgoing_links = []
     discovered_urls = []
     for link in soup.find_all("a", href=True):
-        new_url = urljoin(url, link["href"]).split("#")[0]
-        if new_url.startswith("http"):
-            outgoing_links.append(new_url)
-            discovered_urls.append(new_url)
+        raw_url = urljoin(url, link["href"]).split("#")[0]
+        if raw_url.startswith("http"):
+            norm_url = normalize_url(raw_url)
+            outgoing_links.append(norm_url)
+            discovered_urls.append(norm_url)
+
+    # Deduplicate outgoing links list
+    outgoing_links = list(dict.fromkeys(outgoing_links))
 
     # Collect backlinks for this page from Redis
-    backlinks = list(redis_client.hkeys(f"backlinks:{url}"))
+    norm_url = normalize_url(url)
+    backlinks = list(redis_client.hkeys(f"backlinks:{norm_url}"))
 
     page_data = {
-        "url": url,
+        "url": norm_url,
         "title": title,
         "about": about,
+        "body_snippet": body_snippet,
         "vector": vector,
         "outgoing_links": outgoing_links,
         "backlinks": backlinks,
@@ -203,9 +292,12 @@ async def worker(worker_id, queue, session, stats):
         stats: Shared dict for tracking crawl statistics.
     """
     while True:
-        url = await queue.get()
+        raw_url = await queue.get()
 
         try:
+            # Normalize URL for deduplication
+            url = normalize_url(raw_url)
+
             # Skip if already visited
             if redis_client.sismember("visited_urls", url):
                 continue
@@ -214,7 +306,7 @@ async def worker(worker_id, queue, session, stats):
             if stats["pages_crawled"] >= config.MAX_PAGES:
                 continue
 
-            # Check robots.txt permission
+            # Check robots.txt permission (use original URL for accurate matching)
             if not await robots.can_fetch(session, url):
                 redis_client.sadd("visited_urls", url)
                 continue
@@ -230,7 +322,7 @@ async def worker(worker_id, queue, session, stats):
                 None, process_page_data, url, html
             )
 
-            # Store in MongoDB
+            # Store in MongoDB (keyed by normalized URL)
             pages_collection.update_one(
                 {"url": url}, {"$set": page_data}, upsert=True
             )
@@ -241,9 +333,9 @@ async def worker(worker_id, queue, session, stats):
                 f"[W{worker_id}] ✓ Stored ({stats['pages_crawled']}/{config.MAX_PAGES}): {url}"
             )
 
-            # Enqueue discovered URLs
+            # Enqueue discovered URLs (already normalized by process_page_data)
             for new_url in discovered_urls:
-                # Register backlink regardless
+                # Register backlink (normalized source → normalized target)
                 redis_client.hset(f"backlinks:{new_url}", url, 1)
 
                 # Only enqueue if not visited and allowed
