@@ -1,0 +1,21 @@
+# Core crawler
+aiohttp>=3.9
+beautifulsoup4>=4.12
+requests>=2.31
+
+# Embedding model
+sentence-transformers>=2.2
+
+# Databases
+redis>=5.0
+pymongo>=4.6
+
+# robots.txt compliance
+protego>=0.3
+
+# Search API
+fastapi>=0.110
+uvicorn>=0.29
+
+# Ranking / vector math
+numpy>=1.26
