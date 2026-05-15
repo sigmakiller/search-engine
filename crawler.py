@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 import time
 from pymongo import MongoClient
 import config
+from robots_manager import RobotsManager
 
 # Load embedding model
 model = SentenceTransformer(config.MODEL_NAME)
@@ -23,6 +24,9 @@ r = redis.Redis(
 mongo_client = MongoClient(config.MONGO_URI)
 db = mongo_client[config.MONGO_DB_NAME]
 pages_collection = db[config.MONGO_COLLECTION]
+
+# Robots.txt manager
+robots = RobotsManager()
 
 def get_page_content(url):
     """Fetch and parse a webpage."""
@@ -66,8 +70,8 @@ def process_page(url, html):
         new_url = urljoin(url, link["href"]).split("#")[0]
         if new_url.startswith("http"):
             outgoing_links.append(new_url)
-            # Add to Redis queue if not already visited
-            if not r.sismember("visited_urls", new_url):
+            # Add to Redis queue if not already visited and allowed by robots.txt
+            if not r.sismember("visited_urls", new_url) and robots.can_fetch(new_url):
                 r.lpush("to_crawl", new_url)
 
             # Register backlink
@@ -90,15 +94,28 @@ def process_page(url, html):
     print(f"Successfully Stored: {url}")
 
 def crawler_loop():
-    """Run indefinitely until terminated."""
+    """Run indefinitely until terminated or MAX_PAGES reached."""
+    pages_crawled = 0
+
     while True:
+        # Stop if we've hit the page limit
+        if pages_crawled >= config.MAX_PAGES:
+            print(f"Reached MAX_PAGES limit ({config.MAX_PAGES}). Stopping.")
+            break
+
         url = r.rpop("to_crawl")
         if not url:
             print("No URLs left, waiting...")
             time.sleep(5)
             continue
 
+        # Skip already visited
         if r.sismember("visited_urls", url):
+            continue
+
+        # Check robots.txt permission
+        if not robots.can_fetch(url):
+            r.sadd("visited_urls", url)  # Mark as visited so we don't retry
             continue
 
         html = get_page_content(url)
@@ -107,7 +124,15 @@ def crawler_loop():
 
         process_page(url, html)
         r.sadd("visited_urls", url)
-        time.sleep(1)  # polite delay
+        pages_crawled += 1
+
+        # Use per-domain crawl delay from robots.txt (or default)
+        delay = robots.get_crawl_delay(url)
+        time.sleep(delay)
+
+    # Print final stats
+    print(f"\nCrawl complete. Pages crawled: {pages_crawled}")
+    print(f"Robots.txt stats: {robots.stats}")
 
 if __name__ == "__main__":
     # Seed URLs if Redis queue is empty
