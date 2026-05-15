@@ -1,19 +1,27 @@
-import requests
+"""
+Async web crawler with BFS traversal, robots.txt compliance,
+per-domain rate limiting, and retry with exponential backoff.
+"""
+
+import asyncio
+import aiohttp
 from bs4 import BeautifulSoup
 import redis
 from sentence_transformers import SentenceTransformer
-import json
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 import time
 from pymongo import MongoClient
 import config
 from robots_manager import RobotsManager
 
+
+# ─── Shared Resources ───────────────────────────────────────────────────────
+
 # Load embedding model
 model = SentenceTransformer(config.MODEL_NAME)
 
 # Redis connection
-r = redis.Redis(
+redis_client = redis.Redis(
     host=config.REDIS_HOST,
     port=config.REDIS_PORT,
     db=config.REDIS_DB,
@@ -28,21 +36,110 @@ pages_collection = db[config.MONGO_COLLECTION]
 # Robots.txt manager
 robots = RobotsManager()
 
-def get_page_content(url):
-    """Fetch and parse a webpage."""
-    try:
-        headers = {
-            "User-Agent": config.USER_AGENT
-        }
-        response = requests.get(url, timeout=10, headers=headers)
-        if response.status_code == 200 and "text/html" in response.headers.get("Content-Type", ""):
-            return response.text
-    except Exception as e:
-        print(f"Failed to fetch {url}: {e}")
+
+# ─── Per-Domain Rate Limiter ─────────────────────────────────────────────────
+
+class DomainRateLimiter:
+    """
+    Enforces per-domain concurrency limits and crawl delays.
+    Each domain gets its own semaphore (max concurrent requests)
+    and a tracked last-request time to enforce crawl-delay.
+    """
+
+    def __init__(self):
+        self._semaphores = {}   # domain -> asyncio.Semaphore
+        self._last_request = {} # domain -> float (timestamp)
+
+    def _get_domain(self, url):
+        parsed = urlparse(url)
+        return parsed.netloc
+
+    async def acquire(self, url):
+        """
+        Wait until we're allowed to make a request to this URL's domain.
+        Enforces both concurrency limit and crawl delay.
+        """
+        domain = self._get_domain(url)
+
+        # Create semaphore for new domains
+        if domain not in self._semaphores:
+            self._semaphores[domain] = asyncio.Semaphore(
+                config.MAX_CONCURRENT_PER_DOMAIN
+            )
+
+        # Acquire the semaphore (limits concurrent requests to same domain)
+        await self._semaphores[domain].acquire()
+
+        # Enforce crawl delay since last request to this domain
+        delay = robots.get_crawl_delay(url)
+        last = self._last_request.get(domain, 0)
+        elapsed = time.time() - last
+        if elapsed < delay:
+            await asyncio.sleep(delay - elapsed)
+
+        # Record this request time
+        self._last_request[domain] = time.time()
+
+    def release(self, url):
+        """Release the semaphore for a URL's domain."""
+        domain = self._get_domain(url)
+        if domain in self._semaphores:
+            self._semaphores[domain].release()
+
+
+rate_limiter = DomainRateLimiter()
+
+
+# ─── Page Fetching ───────────────────────────────────────────────────────────
+
+async def fetch_page(session, url):
+    """
+    Fetch a webpage with retry and exponential backoff.
+
+    Returns:
+        HTML string on success, None on failure.
+    """
+    for attempt in range(config.MAX_RETRIES):
+        try:
+            await rate_limiter.acquire(url)
+            try:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=config.REQUEST_TIMEOUT),
+                    headers={"User-Agent": config.USER_AGENT},
+                ) as response:
+                    if (
+                        response.status == 200
+                        and "text/html" in response.headers.get("Content-Type", "")
+                    ):
+                        return await response.text()
+                    else:
+                        return None
+            finally:
+                rate_limiter.release(url)
+
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            rate_limiter.release(url)
+            if attempt < config.MAX_RETRIES - 1:
+                wait = config.RETRY_BACKOFF_BASE ** attempt
+                print(f"[RETRY] Attempt {attempt + 1}/{config.MAX_RETRIES} failed for {url}: {e}. Retrying in {wait}s...")
+                await asyncio.sleep(wait)
+            else:
+                print(f"[FAIL] All {config.MAX_RETRIES} attempts failed for {url}: {e}")
+                return None
+
+        except Exception as e:
+            rate_limiter.release(url)
+            print(f"[ERROR] Unexpected error fetching {url}: {e}")
+            return None
+
     return None
 
+
+# ─── Content Extraction ──────────────────────────────────────────────────────
+
 def extract_about(soup):
-    """Extract description or about content."""
+    """Extract description or about content from a page."""
     desc = soup.find("meta", attrs={"name": "description"})
     if desc and desc.get("content"):
         return desc["content"]
@@ -57,8 +154,12 @@ def extract_about(soup):
 
     return ""
 
-def process_page(url, html):
-    """Extract useful data from page and store it."""
+
+def process_page_data(url, html):
+    """
+    Extract useful data from a page's HTML.
+    Returns the page data dict and list of discovered URLs.
+    """
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(strip=True) if soup.title else ""
     about = extract_about(soup)
@@ -66,21 +167,16 @@ def process_page(url, html):
 
     # Collect outgoing links
     outgoing_links = []
+    discovered_urls = []
     for link in soup.find_all("a", href=True):
         new_url = urljoin(url, link["href"]).split("#")[0]
         if new_url.startswith("http"):
             outgoing_links.append(new_url)
-            # Add to Redis queue if not already visited and allowed by robots.txt
-            if not r.sismember("visited_urls", new_url) and robots.can_fetch(new_url):
-                r.lpush("to_crawl", new_url)
+            discovered_urls.append(new_url)
 
-            # Register backlink
-            r.hset(f"backlinks:{new_url}", url, 1)
+    # Collect backlinks for this page from Redis
+    backlinks = list(redis_client.hkeys(f"backlinks:{url}"))
 
-    # Collect backlinks for this page
-    backlinks = list(r.hkeys(f"backlinks:{url}"))
-
-    # Store in MongoDB
     page_data = {
         "url": url,
         "title": title,
@@ -90,54 +186,158 @@ def process_page(url, html):
         "backlinks": backlinks,
         "timestamp": time.time(),
     }
-    pages_collection.update_one({"url": url}, {"$set": page_data}, upsert=True)
-    print(f"Successfully Stored: {url}")
 
-def crawler_loop():
-    """Run indefinitely until terminated or MAX_PAGES reached."""
-    pages_crawled = 0
+    return page_data, discovered_urls
 
+
+# ─── Worker & Crawl Loop ────────────────────────────────────────────────────
+
+async def worker(worker_id, queue, session, stats):
+    """
+    Async worker that pulls URLs from the queue and processes them.
+
+    Args:
+        worker_id: Numeric ID for logging.
+        queue: asyncio.Queue of URLs to crawl.
+        session: Shared aiohttp.ClientSession.
+        stats: Shared dict for tracking crawl statistics.
+    """
     while True:
-        # Stop if we've hit the page limit
-        if pages_crawled >= config.MAX_PAGES:
-            print(f"Reached MAX_PAGES limit ({config.MAX_PAGES}). Stopping.")
-            break
+        url = await queue.get()
 
-        url = r.rpop("to_crawl")
-        if not url:
-            print("No URLs left, waiting...")
-            time.sleep(5)
-            continue
+        try:
+            # Skip if already visited
+            if redis_client.sismember("visited_urls", url):
+                continue
 
-        # Skip already visited
-        if r.sismember("visited_urls", url):
-            continue
+            # Check page limit
+            if stats["pages_crawled"] >= config.MAX_PAGES:
+                continue
 
-        # Check robots.txt permission
-        if not robots.can_fetch(url):
-            r.sadd("visited_urls", url)  # Mark as visited so we don't retry
-            continue
+            # Check robots.txt permission
+            if not await robots.can_fetch(session, url):
+                redis_client.sadd("visited_urls", url)
+                continue
 
-        html = get_page_content(url)
-        if not html:
-            continue
+            # Fetch the page
+            html = await fetch_page(session, url)
+            if not html:
+                continue
 
-        process_page(url, html)
-        r.sadd("visited_urls", url)
-        pages_crawled += 1
+            # Process the page (CPU-bound, run in thread pool)
+            loop = asyncio.get_event_loop()
+            page_data, discovered_urls = await loop.run_in_executor(
+                None, process_page_data, url, html
+            )
 
-        # Use per-domain crawl delay from robots.txt (or default)
-        delay = robots.get_crawl_delay(url)
-        time.sleep(delay)
+            # Store in MongoDB
+            pages_collection.update_one(
+                {"url": url}, {"$set": page_data}, upsert=True
+            )
+            redis_client.sadd("visited_urls", url)
+            stats["pages_crawled"] += 1
 
-    # Print final stats
-    print(f"\nCrawl complete. Pages crawled: {pages_crawled}")
-    print(f"Robots.txt stats: {robots.stats}")
+            print(
+                f"[W{worker_id}] ✓ Stored ({stats['pages_crawled']}/{config.MAX_PAGES}): {url}"
+            )
+
+            # Enqueue discovered URLs
+            for new_url in discovered_urls:
+                # Register backlink regardless
+                redis_client.hset(f"backlinks:{new_url}", url, 1)
+
+                # Only enqueue if not visited and allowed
+                if not redis_client.sismember("visited_urls", new_url):
+                    if await robots.can_fetch(session, new_url):
+                        await queue.put(new_url)
+                        stats["urls_queued"] += 1
+
+        except Exception as e:
+            print(f"[W{worker_id}] Error processing {url}: {e}")
+
+        finally:
+            queue.task_done()
+
+
+async def crawl():
+    """Main async crawl orchestrator."""
+    print(f"Starting async crawler with {config.MAX_CONCURRENT_REQUESTS} workers...")
+    print(f"Target: {config.MAX_PAGES} pages\n")
+
+    # Stats tracking
+    stats = {
+        "pages_crawled": 0,
+        "urls_queued": 0,
+        "start_time": time.time(),
+    }
+
+    # Create the URL queue
+    queue = asyncio.Queue()
+
+    # Seed the queue
+    if redis_client.llen("to_crawl") == 0:
+        for seed in config.SEED_URLS:
+            await queue.put(seed)
+            print(f"[SEED] {seed}")
+    else:
+        # Drain existing Redis queue into asyncio queue
+        while True:
+            url = redis_client.rpop("to_crawl")
+            if not url:
+                break
+            await queue.put(url)
+        print(f"[SEED] Loaded {queue.qsize()} URLs from Redis queue")
+
+    print()
+
+    # Create shared HTTP session
+    connector = aiohttp.TCPConnector(
+        limit=config.MAX_CONCURRENT_REQUESTS,
+        limit_per_host=config.MAX_CONCURRENT_PER_DOMAIN,
+    )
+    async with aiohttp.ClientSession(connector=connector) as session:
+        # Spawn workers
+        workers = [
+            asyncio.create_task(worker(i, queue, session, stats))
+            for i in range(config.MAX_CONCURRENT_REQUESTS)
+        ]
+
+        # Wait for the queue to be fully processed or MAX_PAGES hit
+        try:
+            while stats["pages_crawled"] < config.MAX_PAGES:
+                if queue.empty():
+                    # Wait a bit to see if new URLs arrive from workers
+                    await asyncio.sleep(2)
+                    if queue.empty():
+                        print("\nQueue empty, no more URLs to crawl.")
+                        break
+                await asyncio.sleep(0.5)
+
+        except KeyboardInterrupt:
+            print("\n\nKeyboardInterrupt received. Shutting down gracefully...")
+
+        # Cancel all workers
+        for w in workers:
+            w.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+
+    # Print final report
+    elapsed = time.time() - stats["start_time"]
+    print(f"\n{'='*60}")
+    print(f"  CRAWL COMPLETE")
+    print(f"{'='*60}")
+    print(f"  Pages crawled : {stats['pages_crawled']}")
+    print(f"  URLs queued   : {stats['urls_queued']}")
+    print(f"  Time elapsed  : {elapsed:.1f}s")
+    print(f"  Speed         : {stats['pages_crawled'] / max(elapsed, 1):.1f} pages/sec")
+    print(f"  Robots stats  : {robots.stats}")
+    print(f"{'='*60}")
+
+
+# ─── Entry Point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Seed URLs if Redis queue is empty
-    if r.llen("to_crawl") == 0:
-        for seed in config.SEED_URLS:
-            r.lpush("to_crawl", seed)
-
-    crawler_loop()
+    try:
+        asyncio.run(crawl())
+    except KeyboardInterrupt:
+        print("\nCrawler stopped.")
