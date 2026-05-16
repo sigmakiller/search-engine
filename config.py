@@ -40,11 +40,11 @@ USER_AGENT = "Mozilla/5.0 (compatible; MiniSearchBot/1.0; +https://example.com/b
 BOT_NAME = "MiniSearchBot"  # Used for robots.txt matching
 
 # Concurrency
-MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "10"))
-MAX_CONCURRENT_PER_DOMAIN = int(os.getenv("MAX_CONCURRENT_PER_DOMAIN", "2"))
+MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "15"))
+MAX_CONCURRENT_PER_DOMAIN = int(os.getenv("MAX_CONCURRENT_PER_DOMAIN", "3"))
 
 # Politeness
-DEFAULT_CRAWL_DELAY = float(os.getenv("DEFAULT_CRAWL_DELAY", "1.0"))  # seconds
+DEFAULT_CRAWL_DELAY = float(os.getenv("DEFAULT_CRAWL_DELAY", "0.5"))  # seconds
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))  # seconds
 
 # Retry
