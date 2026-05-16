@@ -367,20 +367,29 @@ async def crawl():
     queue = asyncio.Queue()
 
     # Seed the queue
-    if redis_client.llen("to_crawl") == 0:
-        for seed in config.SEED_URLS:
+    # Seed the queue — only add seeds that haven't been visited yet
+    new_seeds = 0
+    for seed in config.SEED_URLS:
+        norm_seed = normalize_url(seed)
+        if not redis_client.sismember("visited_urls", norm_seed):
             await queue.put(seed)
             print(f"[SEED] {seed}")
-    else:
-        # Drain existing Redis queue into asyncio queue
-        while True:
-            url = redis_client.rpop("to_crawl")
-            if not url:
-                break
-            await queue.put(url)
-        print(f"[SEED] Loaded {queue.qsize()} URLs from Redis queue")
+            new_seeds += 1
+        else:
+            print(f"[SKIP] Already visited: {seed}")
 
-    print()
+    # Also drain any pending URLs from Redis queue (from a previous run)
+    restored = 0
+    while True:
+        url = redis_client.rpop("to_crawl")
+        if not url:
+            break
+        await queue.put(url)
+        restored += 1
+    if restored:
+        print(f"[QUEUE] Restored {restored} pending URLs from previous run")
+
+    print(f"\n[INFO] New seeds: {new_seeds} | Restored from queue: {restored} | Total: {queue.qsize()}\n")
 
     # Create shared HTTP session
     connector = aiohttp.TCPConnector(
