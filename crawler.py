@@ -163,7 +163,12 @@ async def fetch_page(session, url):
                         response.status == 200
                         and "text/html" in response.headers.get("Content-Type", "")
                     ):
-                        return await response.text()
+                        # Handle non-UTF-8 pages gracefully
+                        try:
+                            return await response.text(errors="replace")
+                        except UnicodeDecodeError:
+                            raw = await response.read()
+                            return raw.decode("utf-8", errors="replace")
                     else:
                         return None
             finally:
