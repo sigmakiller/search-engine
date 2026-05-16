@@ -81,12 +81,35 @@ API_PORT = int(os.getenv("API_PORT", "8000"))
 # ─── Seed URLs ───────────────────────────────────────────────────────────────
 
 SEED_URLS = [
+    # Knowledge
     "https://en.wikipedia.org/wiki/Artificial_intelligence",
+    "https://en.wikipedia.org/wiki/Computer_science",
+    "https://en.wikipedia.org/wiki/Machine_learning",
+    "https://en.wikipedia.org/wiki/World_Wide_Web",
+    "https://simple.wikipedia.org",
+
+    # Tech / Docs
     "https://www.python.org",
-    "https://archive.org/details/audio_music",
-    "https://archive.org/details/internetarchivebooks",
-    "https://archive.org/details/youtubecrawl",
+    "https://docs.python.org/3/",
+    "https://developer.mozilla.org/en-US/",
+    "https://www.w3schools.com",
+    "https://github.com/explore",
     "https://stackoverflow.com/questions",
+
+    # Science
+    "https://arxiv.org",
+    "https://www.nasa.gov",
+    "https://www.nature.com",
+
+    # News / General
+    "https://www.bbc.com/news",
+    "https://www.reuters.com",
+    "https://medium.com/tag/technology",
     "https://www.quora.com/What-is-artificial-intelligence-15",
+
+    # Open Knowledge
     "https://archive.org",
+    "https://www.gutenberg.org",
+    "https://openlibrary.org",
+    "https://www.britannica.com",
 ]
