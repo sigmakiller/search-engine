@@ -16,3 +16,6 @@ COPY . .
 
 # Environment defaults
 ENV PYTHONUNBUFFERED=1
+
+# Start the application using Render's PORT, defaulting to 8000
+CMD ["sh", "-c", "uvicorn search_api:app --host 0.0.0.0 --port ${PORT:-8000}"]

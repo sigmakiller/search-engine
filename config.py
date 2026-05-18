@@ -4,6 +4,10 @@ All settings are configurable via environment variables with sensible defaults.
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 
 # ─── Database ────────────────────────────────────────────────────────────────
@@ -84,7 +88,7 @@ VECTOR_SEARCH_CANDIDATES = 200  # numCandidates for $vectorSearch (10-20x limit)
 # ─── API Settings ────────────────────────────────────────────────────────────
 
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
-API_PORT = int(os.getenv("API_PORT", "8000"))
+API_PORT = int(os.getenv("PORT", os.getenv("API_PORT", "8000")))
 
 
 # ─── Seed URLs ───────────────────────────────────────────────────────────────
