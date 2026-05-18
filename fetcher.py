@@ -51,12 +51,15 @@ redis_client = redis.from_url(
 robots = RobotsManager()
 
 # MinIO Client
-s3_client = boto3.client(
-    "s3",
-    endpoint_url=f"http://{config.MINIO_ENDPOINT}" if not config.MINIO_SECURE else f"https://{config.MINIO_ENDPOINT}",
-    aws_access_key_id=config.MINIO_ACCESS_KEY,
-    aws_secret_access_key=config.MINIO_SECRET_KEY,
-)
+s3_kwargs = {
+    "aws_access_key_id": config.MINIO_ACCESS_KEY,
+    "aws_secret_access_key": config.MINIO_SECRET_KEY,
+    "region_name": os.getenv("MINIO_REGION", "us-east-1"),
+}
+if config.MINIO_ENDPOINT and "amazonaws.com" not in config.MINIO_ENDPOINT:
+    s3_kwargs["endpoint_url"] = f"http://{config.MINIO_ENDPOINT}" if not config.MINIO_SECURE else f"https://{config.MINIO_ENDPOINT}"
+
+s3_client = boto3.client("s3", **s3_kwargs)
 
 # Ensure bucket exists
 try:
