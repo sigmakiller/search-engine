@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel | Cyberpunk Search</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="scanline"></div>
+    <div class="container">
+        <header class="header">
+            <h1 class="glitch" data-text="SENTINEL">SENTINEL</h1>
+            <p class="subtitle">ENTER QUERY TO INITIALIZE NEURAL SEARCH</p>
+        </header>
+
+        <main>
+            <div class="search-container">
+                <input type="text" id="search-input" placeholder="> Search vector index..." autocomplete="off">
+                <button id="search-btn">EXECUTE</button>
+            </div>
+
+            <div class="stats-bar">
+                <span id="status-text">STATUS: IDLE</span>
+                <span id="time-text">TIME: 0ms</span>
+                <span id="results-count">MATCHES: 0</span>
+            </div>
+
+            <div id="results-container" class="results-container">
+                <!-- Results will be injected here -->
+            </div>
+            
+            <div class="pagination" id="pagination" style="display: none;">
+                <button id="prev-btn" class="cyber-btn">&lt; PREV</button>
+                <span id="page-indicator">PAGE: 1</span>
+                <button id="next-btn" class="cyber-btn">NEXT &gt;</button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Decorative UI Elements -->
+    <div class="corner top-left"></div>
+    <div class="corner top-right"></div>
+    <div class="corner bottom-left"></div>
+    <div class="corner bottom-right"></div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

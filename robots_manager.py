@@ -144,10 +144,6 @@ class RobotsManager:
 
         allowed = parser.can_fetch(url, config.BOT_NAME)
 
-        # Also check with wildcard user-agent as fallback
-        if allowed:
-            allowed = parser.can_fetch(url, "*")
-
         if not allowed:
             print(f"[ROBOTS] Blocked by robots.txt: {url}")
 

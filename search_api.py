@@ -9,17 +9,20 @@ Endpoints:
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, FileResponse
 import time
+import os
 import redis
 import config
 import ranker
+from prometheus_fastapi_instrumentator import Instrumentator
 
 
 # ─── App Setup ───────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="MiniSearch Engine API",
+    title="Sentinel API",
     description="Semantic search engine with BFS crawling, vector embeddings, and hybrid ranking.",
     version="1.0.0",
 )
@@ -33,6 +36,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Prometheus instrumentation
+Instrumentator().instrument(app).expose(app, include_in_schema=False, should_gzip=True)
+
 # Redis connection (for crawl queue stats)
 redis_client = redis.Redis(
     host=config.REDIS_HOST,
@@ -41,6 +47,13 @@ redis_client = redis.Redis(
     decode_responses=True,
 )
 
+# Mount static frontend
+frontend_path = os.path.join(os.path.dirname(__file__), "frontend")
+app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+
+@app.get("/")
+async def serve_frontend():
+    return FileResponse(os.path.join(frontend_path, "index.html"))
 
 # ─── Search Endpoint ────────────────────────────────────────────────────────
 
@@ -180,7 +193,7 @@ if __name__ == "__main__":
     import uvicorn
 
     print(f"\n{'='*60}")
-    print(f"  MiniSearch Engine API")
+    print(f"  Sentinel API")
     print(f"  http://{config.API_HOST}:{config.API_PORT}")
     print(f"  Docs: http://localhost:{config.API_PORT}/docs")
     print(f"{'='*60}\n")

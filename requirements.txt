@@ -19,3 +19,11 @@ uvicorn>=0.29
 
 # Ranking / vector math
 numpy>=1.26
+
+# Observability
+prometheus-client>=0.20.0
+prometheus-fastapi-instrumentator>=7.0.0
+
+# Task queue and object storage
+celery>=5.3
+boto3>=1.34

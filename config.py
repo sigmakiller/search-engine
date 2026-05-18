@@ -26,6 +26,15 @@ VECTOR_INDEX_NAME = os.getenv("VECTOR_INDEX_NAME", "vector_index")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+# Celery
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}")
+
+# MinIO (S3)
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "password")
+MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "crawled-pages")
+MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
 
 # ─── Embedding Model ────────────────────────────────────────────────────────
@@ -36,7 +45,7 @@ VECTOR_DIMENSIONS = 384  # Output dimensions for all-MiniLM-L6-v2
 
 # ─── Crawler Settings ───────────────────────────────────────────────────────
 
-USER_AGENT = "Mozilla/5.0 (compatible; MiniSearchBot/1.0; +https://example.com/bot)"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 BOT_NAME = "MiniSearchBot"  # Used for robots.txt matching
 
 # Concurrency
@@ -52,7 +61,7 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 RETRY_BACKOFF_BASE = 2  # exponential backoff: 2^attempt seconds
 
 # Scale
-MAX_PAGES = int(os.getenv("MAX_PAGES", "30000"))  # Stop crawling after this many pages
+MAX_PAGES = int(os.getenv("MAX_PAGES", "50"))  # Stop crawling after this many pages
 
 # Content extraction
 BODY_SNIPPET_LENGTH = 500   # Characters to store for display snippets
