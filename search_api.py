@@ -15,6 +15,14 @@ import time
 import os
 import redis
 import config
+
+import sys
+print(f"--- DIAGNOSTICS ---", file=sys.stderr)
+print(f"MONGO_URI: {repr(config.MONGO_URI)}", file=sys.stderr)
+print(f"MONGO_URI type: {type(config.MONGO_URI)}", file=sys.stderr)
+print(f"OS ENV MONGO_URI: {repr(os.getenv('MONGO_URI'))}", file=sys.stderr)
+print(f"-------------------", file=sys.stderr)
+
 import ranker
 from prometheus_fastapi_instrumentator import Instrumentator
 

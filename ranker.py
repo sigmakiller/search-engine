@@ -30,6 +30,9 @@ torch.set_num_threads(1)
 
 model = SentenceTransformer(config.MODEL_NAME)
 
+import sys
+print(f"DEBUG MONGO_URI: {repr(config.MONGO_URI)}", file=sys.stderr)
+
 mongo_client = MongoClient(config.MONGO_URI)
 db = mongo_client[config.MONGO_DB_NAME]
 pages_collection = db[config.MONGO_COLLECTION]
