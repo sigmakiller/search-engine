@@ -48,10 +48,8 @@ app.add_middleware(
 Instrumentator().instrument(app).expose(app, include_in_schema=False, should_gzip=True)
 
 # Redis connection (for crawl queue stats)
-redis_client = redis.Redis(
-    host=config.REDIS_HOST,
-    port=config.REDIS_PORT,
-    db=config.REDIS_DB,
+redis_client = redis.from_url(
+    config.CELERY_BROKER_URL,
     decode_responses=True,
 )
 

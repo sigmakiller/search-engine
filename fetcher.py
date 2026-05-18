@@ -43,10 +43,8 @@ def normalize_url(url):
 
 # ─── Shared Resources ───────────────────────────────────────────────────────
 
-redis_client = redis.Redis(
-    host=config.REDIS_HOST,
-    port=config.REDIS_PORT,
-    db=config.REDIS_DB,
+redis_client = redis.from_url(
+    config.CELERY_BROKER_URL,
     decode_responses=True,
 )
 
