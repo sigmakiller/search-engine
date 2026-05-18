@@ -17,6 +17,8 @@ load_dotenv()
 #   mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/
 # Falls back to local MongoDB if not set.
 MONGO_URI = os.getenv("MONGO_URI", "").strip() or "mongodb://localhost:27017/"
+if not MONGO_URI.startswith(("mongodb://", "mongodb+srv://")):
+    MONGO_URI = f"mongodb+srv://{MONGO_URI}"
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "search_engine")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "pages")
 
