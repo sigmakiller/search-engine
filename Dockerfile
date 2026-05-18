@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 COPY . .
 
 # Pre-download the embedding model to bake it into the Docker image and avoid memory spikes on boot
+ENV HF_HOME=/app/hf_cache
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
 # Environment defaults
