@@ -208,5 +208,4 @@ if __name__ == "__main__":
         "search_api:app",
         host=config.API_HOST,
         port=config.API_PORT,
-        reload=True,
     )
