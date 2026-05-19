@@ -1,4 +1,5 @@
 from celery_app import app
+import os
 import boto3
 import time
 from bs4 import BeautifulSoup
